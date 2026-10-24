@@ -1,0 +1,426 @@
+{
+  "enabled": {
+    "description": "开启读空气撤回",
+    "type": "bool",
+    "default": true,
+    "hint": "总开关。关掉后插件不做任何事，也不会拉取聊天记录。"
+  },
+  "dry_run": {
+    "description": "演练模式（只记日志，不真的撤回）",
+    "type": "bool",
+    "default": false,
+    "hint": "建议先开一天看看判定质量：日志里会写清楚它想撤回哪条、理由是什么，但不会动真格。"
+  },
+  "scope": {
+    "description": "作用范围",
+    "type": "object",
+    "items": {
+      "recall_groups": {
+        "description": "在群聊里生效",
+        "type": "bool",
+        "default": true
+      },
+      "recall_private": {
+        "description": "在私聊里生效",
+        "type": "bool",
+        "default": true
+      },
+      "only_sessions": {
+        "description": "只在这些会话生效（留空 = 全部）",
+        "type": "list",
+        "default": [],
+        "hint": "可填完整 UMO（如 default:GroupMessage:111111111）、纯群号/QQ 号，或平台前缀（如 default:GroupMessage:）。"
+      },
+      "ignore_sessions": {
+        "description": "这些会话永不撤回",
+        "type": "list",
+        "default": [],
+        "hint": "写法同上一项。只有白名单不填时，这里才是唯一的排除手段。"
+      }
+    }
+  },
+  "precheck": {
+    "description": "发送前逻辑审查（过审才发）",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "开启发送前审查",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，LLM 生成的回复会先被截下来判一遍：明显不合逻辑就打回重写，重写的再判一遍，始终不过就拦截不发送。指令回显、插件结果、带图片/语音的消息不受影响。"
+      },
+      "dry_run": {
+        "description": "演练模式（只记日志，不真的拦截）",
+        "type": "bool",
+        "default": false,
+        "hint": "想先看判定质量又不想吞消息时打开：日志里会写清楚它想拦哪条、理由是什么，但消息照发。"
+      },
+      "max_attempts": {
+        "description": "打回重写的最大次数",
+        "type": "int",
+        "default": 1,
+        "hint": "0 = 只审不重写（不合格直接拦）；1 = 打回改写一次，改完再审；2 = 最多改两轮。每多一轮就多一次模型往返。",
+        "slider": {
+          "min": 0,
+          "max": 3,
+          "step": 1
+        }
+      },
+      "min_chars": {
+        "description": "少于这么多字就不审",
+        "type": "int",
+        "default": 2,
+        "hint": "一两个字的回复不可能「不合逻辑」，跳过能省一次调用。",
+        "slider": {
+          "min": 1,
+          "max": 20,
+          "step": 1
+        }
+      },
+      "history_count": {
+        "description": "审查时带多少条聊天记录",
+        "type": "int",
+        "default": 10,
+        "hint": "只用来判断「答非所问/自相矛盾」，不需要很长。条数越少越快。",
+        "slider": {
+          "min": 2,
+          "max": 40,
+          "step": 1
+        }
+      },
+      "max_line_chars": {
+        "description": "每条记录最多保留多少字",
+        "type": "int",
+        "default": 120,
+        "hint": "越短越快。审查只需要看懂在聊什么。",
+        "slider": {
+          "min": 30,
+          "max": 400,
+          "step": 10
+        }
+      },
+      "timeout_seconds": {
+        "description": "单次审查/重写的超时（秒）",
+        "type": "int",
+        "default": 12,
+        "hint": "超时就按「通过」放行——宁可发出去，也不因为审查卡住而吞消息。",
+        "slider": {
+          "min": 3,
+          "max": 60,
+          "step": 1
+        }
+      },
+      "max_checks_per_hour": {
+        "description": "每小时最多审多少条",
+        "type": "int",
+        "default": 200,
+        "hint": "熔断用。超过后本小时内后续消息直接放行，避免高峰把额度烧光。",
+        "slider": {
+          "min": 10,
+          "max": 1000,
+          "step": 10
+        }
+      },
+      "skip_filler": {
+        "description": "跳过「嗯/好/哈哈」这类语气回复",
+        "type": "bool",
+        "default": true
+      },
+      "skip_structured": {
+        "description": "带 @某人 / 引用回复 的消息整条放行",
+        "type": "bool",
+        "default": true,
+        "hint": "这些是工具调用（reply_to、[At:123456]）的产物，改写会破坏地址；默认既不审也不改也不拦。关掉后它们会像普通文本一样被审查（但改写时仍会保留 @ 和引用）。"
+      },
+      "skip_tool_patterns": {
+        "description": "含这些字符就整条放行（工具调用）",
+        "type": "list",
+        "default": [
+          "<\\s*/?\\s*(?:tool|tools|function_call|function_calls|invoke|parameter)\\b",
+          "<\\|[a-z_]{2,20}\\|>",
+          "(?i)\\b(?:tool_calls|tool_call_id|tool_use|tool_result|function_call|function_calls)\\b",
+          "(?i)\"type\"\\s*:\\s*\"(?:tool_use|tool_result|function)\"",
+          "(?i)\"arguments\"\\s*:\\s*\\{",
+          "(?i)\\bAction\\s*Input\\s*:|\\bObservation\\s*:",
+          "【工具调用】|\\[TOOL\\]|\\[工具\\]|\\[调用工具",
+          "(?i)mcp__|<antml:",
+          "\\[CQ:[a-zA-Z_]+,",
+          "\\[At\\s*[:：][^\\]]{1,32}\\]",
+          "(?i)\\[reply\\s*[:：][^\\]]{0,32}\\]",
+          "(?i)\\breply_to\\b",
+          "@\\d{5,12}(?!\\d)"
+        ],
+        "hint": "命中的消息既不审也不改，原样发出——免得把工具调用语法或 @ 语法改坏。"
+      },
+      "judge_prompt": {
+        "description": "审查提示词",
+        "type": "text",
+        "default": "【场景】{{session_label}}\n\n【最近聊天】\n{{transcript}}\n\n【待审回复】\n{{draft}}\n\n这条回复是否明显不合逻辑？",
+        "hint": "占位符：{{session_label}}、{{transcript}}、{{draft}}。系统提示词内置，要求模型只回 OK 或 BAD|理由，别改这个约定。"
+      },
+      "rewrite_prompt": {
+        "description": "重写提示词",
+        "type": "text",
+        "default": "【场景】{{session_label}}\n\n【最近聊天】\n{{transcript}}\n\n【你刚才的回复】{{draft}}\n\n【问题】{{reason}}\n\n请重写这条回复，改掉上面的问题。只输出重写后的消息本身。",
+        "hint": "占位符：{{session_label}}、{{transcript}}、{{draft}}、{{reason}}。"
+      }
+    }
+  },
+  "timing": {
+    "description": "时间窗口",
+    "type": "object",
+    "items": {
+      "max_message_age_seconds": {
+        "description": "最多回溯多少秒内自己发的消息",
+        "type": "int",
+        "default": 100,
+        "hint": "QQ 普通成员只能撤回 2 分钟内的消息，所以不要超过 110 秒，否则撤了也会失败。",
+        "slider": {
+          "min": 20,
+          "max": 115,
+          "step": 5
+        }
+      },
+      "min_message_age_seconds": {
+        "description": "消息发出后至少等多少秒才判断",
+        "type": "int",
+        "default": 2,
+        "hint": "给现场留出反应时间，也避免刚发出去就被自己撤掉。",
+        "slider": {
+          "min": 0,
+          "max": 30,
+          "step": 1
+        }
+      },
+      "reaction_window_seconds": {
+        "description": "超过多少秒才有人说话就不算「反应」",
+        "type": "int",
+        "default": 75,
+        "hint": "十分钟后才有人发言，那大概率不是在对机器人说话，没必要复核。",
+        "slider": {
+          "min": 10,
+          "max": 115,
+          "step": 5
+        }
+      },
+      "history_count": {
+        "description": "每次拉取多少条聊天记录做上下文",
+        "type": "int",
+        "default": 25,
+        "hint": "太少看不出语境，太多会稀释重点并增加 token。10～40 比较合适。",
+        "slider": {
+          "min": 8,
+          "max": 60,
+          "step": 1
+        }
+      },
+      "max_line_chars": {
+        "description": "每条消息最多保留多少字",
+        "type": "int",
+        "default": 220,
+        "hint": "超长消息会被截断，防止一条长文挤爆上下文。",
+        "slider": {
+          "min": 40,
+          "max": 800,
+          "step": 10
+        }
+      }
+    }
+  },
+  "decision": {
+    "description": "判定策略",
+    "type": "object",
+    "items": {
+      "min_confidence": {
+        "description": "撤回所需的最低置信度",
+        "type": "float",
+        "default": 0.78,
+        "hint": "调高更保守（撤得少、误撤少），调低更激进。0.7～0.85 是安全区间。",
+        "slider": {
+          "min": 0.3,
+          "max": 1.0,
+          "step": 0.02
+        }
+      },
+      "llm_provider_id": {
+        "description": "用哪个模型做判断（留空 = 跟随当前会话）",
+        "type": "string",
+        "default": "",
+        "hint": "留空会复用这个会话正在用的对话模型。想让判定更便宜/更稳，可以指定一个独立的小模型。"
+      },
+      "llm_timeout_seconds": {
+        "description": "模型判定超时（秒）",
+        "type": "int",
+        "default": 30,
+        "hint": "超时就放弃本次判定（宁可不撤）。",
+        "slider": {
+          "min": 5,
+          "max": 120,
+          "step": 5
+        }
+      },
+      "judge_cooldown_seconds": {
+        "description": "同一会话两次判定之间的最小间隔（秒）",
+        "type": "int",
+        "default": 6,
+        "hint": "防止连发几条消息时疯狂调模型。",
+        "slider": {
+          "min": 0,
+          "max": 120,
+          "step": 1
+        }
+      },
+      "max_judgments_per_hour": {
+        "description": "每小时最多判定多少次",
+        "type": "int",
+        "default": 30,
+        "hint": "纯粹的调用次数兜底，防止群里刷屏时把额度烧光。",
+        "slider": {
+          "min": 1,
+          "max": 200,
+          "step": 1
+        }
+      },
+      "rejudge_on_confusion": {
+        "description": "出现新的困惑信号时允许再判一次",
+        "type": "bool",
+        "default": true,
+        "hint": "同一条消息最多判 2 次：第一次可能判「保留」，但如果接着有人明确表示困惑，可以再给一次机会。"
+      }
+    }
+  },
+  "limits": {
+    "description": "撤回配额（安全阀）",
+    "type": "object",
+    "items": {
+      "max_recalls_per_hour": {
+        "description": "每小时最多撤回几次",
+        "type": "int",
+        "default": 3,
+        "slider": {
+          "min": 0,
+          "max": 30,
+          "step": 1
+        }
+      },
+      "max_recalls_per_day": {
+        "description": "每天最多撤回几次",
+        "type": "int",
+        "default": 12,
+        "slider": {
+          "min": 0,
+          "max": 200,
+          "step": 1
+        }
+      },
+      "session_cooldown_seconds": {
+        "description": "同一会话两次撤回之间的冷却（秒）",
+        "type": "int",
+        "default": 300,
+        "hint": "避免在同一个群里连续撤回，显得机器人很心虚。",
+        "slider": {
+          "min": 0,
+          "max": 3600,
+          "step": 30
+        }
+      },
+      "max_batch_recall": {
+        "description": "一次最多撤回几条（分段回复会连发多条）",
+        "type": "int",
+        "default": 4,
+        "slider": {
+          "min": 1,
+          "max": 10,
+          "step": 1
+        }
+      }
+    }
+  },
+  "signals": {
+    "description": "信号词表",
+    "type": "object",
+    "items": {
+      "instant_recall_patterns": {
+        "description": "命中即撤回（模板泄漏 / 出戏）",
+        "type": "list",
+        "default": [
+          "\\{\\{\\s*[A-Za-z_][\\w.]*\\s*\\}\\}",
+          "<\\|\\s*(?:im_start|im_end|endoftext)\\s*\\|>",
+          "(?im)^\\s*(?:assistant|system|human|user)\\s*[:：]",
+          "(?i)\\bas an ai\\b|\\bi(?:'m| am) an? (?:ai|language model)\\b",
+          "作为一个?\\s*(?:ai|人工智能|语言模型|大模型|ai助手)",
+          "【系统提示】|\\[系统提示\\]|【系统指令】"
+        ],
+        "hint": "机器人自己发出的文本命中这些正则时，不再问模型，直接撤回。默认覆盖「{{占位符}}没替换」「特殊 token 泄漏」「作为一个AI」这类硬伤。"
+      },
+      "confusion_patterns": {
+        "description": "别人表示困惑 / 纠正的信号",
+        "type": "list",
+        "default": [
+          "^[\\s?？]{1,6}$",
+          "^[\\s?？!！]{2,8}$",
+          "你(?:在)?(?:说|讲)(?:的)?(?:啥|什么)",
+          "啥意思|什么意思啊|神马意思",
+          "没(?:听)?懂|听不(?:懂|明白)|看不(?:懂|明白)",
+          "答非所问|文不对题|牛头不对马嘴|驴唇不对马嘴",
+          "(?:你|bot|机器人)[^\\s。！？!?]{0,4}(?:坏|傻|抽风|出bug|出问题|抽什么风)",
+          "什么乱七八糟|乱七八糟的",
+          "重(?:新)?说|再说一遍|说清楚点",
+          "@[^\\s]{0,32}\\s*(?:你)?\\s*(?:在说|说啥|撤回|重说)"
+        ],
+        "hint": "命中只代表「可疑」，会提高判定优先级，并不直接撤回。"
+      },
+      "explicit_request_patterns": {
+        "description": "有人明确要求机器人撤回",
+        "type": "list",
+        "default": [
+          "(?:你|bot|机器人)[^。！？!?\\n]{0,12}(?:撤回|收回去|删掉|重说|收回)",
+          "(?:撤回|收回)(?:一下|吧|掉)?[^。！？!?\\n]{0,6}(?:上一条|刚才|刚刚|那句)",
+          "@[^\\s]{1,40}\\s*(?:撤回|重说|收回)"
+        ],
+        "hint": "命中后直接撤回，不问模型。"
+      },
+      "filler_patterns": {
+        "description": "敷衍式接话（命中就不浪费模型了）",
+        "type": "list",
+        "default": [
+          "^(?:嗯+|哦+|噢+|喔+|额+|呃+|好+|好的|行|可|可以|收到|了解|明白|懂了|ok|okay|hh+h*|哈+|草|艹|笑死|乐|确实|对的?|是的|好耶|啊这|1+|\\+1|6+|牛|绝了|太强了|离谱|难绷|绷)[\\s。.!！~～…]*$"
+        ],
+        "hint": "对方只是随口应了一声，说明对话在正常继续，不需要复核。"
+      },
+      "skip_filler_reply": {
+        "description": "启用敷衍接话跳过",
+        "type": "bool",
+        "default": true
+      },
+      "honor_explicit_request": {
+        "description": "有人要求撤回时立刻照做",
+        "type": "bool",
+        "default": true
+      }
+    }
+  },
+  "output": {
+    "description": "输出与其他",
+    "type": "object",
+    "items": {
+      "recall_notice": {
+        "description": "撤回后追加的一句话（留空 = 安静撤回）",
+        "type": "string",
+        "default": "",
+        "hint": "留空最自然：撤回本身已经足够。填了反而会把注意力引回来。"
+      },
+      "log_decisions": {
+        "description": "把每次判定写进日志",
+        "type": "bool",
+        "default": true
+      },
+      "judge_prompt": {
+        "description": "判定用的用户提示词",
+        "type": "text",
+        "default": "【场景】{{session_label}}\n\n【聊天记录】（按时间先后排列；「我（机器人）」就是机器人自己，行首数字是行号）\n{{transcript}}\n\n【现场反应】{{reaction}}\n\n【待判断】第 {{target}} 行是机器人自己说的话。\n\n请判断这些消息是否明显与当时的语境不符、需要撤回。",
+        "hint": "可用占位符：{{session_label}}（群名/私聊）、{{transcript}}（聊天记录）、{{target}}（待判断的行号）、{{reaction}}（机器人说完后别人的第一句反应）。系统提示词内置，不需要改。"
+      }
+    }
+  }
+}

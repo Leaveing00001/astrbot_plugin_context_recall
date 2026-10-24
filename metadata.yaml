@@ -1,0 +1,40 @@
+name: astrbot_plugin_context_recall
+display_name: "读空气（审+撤）"
+short_desc: "发送前审查逻辑、不合格打回重写；发送后按语境自主撤回"
+desc: |-
+  两条互补的「读空气」链路，共用一份聊天流水和一套配置。
+
+  ## 一、发送前审查（过审才发）
+  1. LLM 生成回复后、发送前把它截下来；
+  2. 判「是否明显不合逻辑」：答非所问 / 自相矛盾 / 事实错乱 / 语无伦次；
+  3. 不合格就打回重写，重写的**再判一遍**；
+  4. 始终不过就**拦截不发送**（可在配置里改成演练模式，只记日志）；
+  5. **带工具调用 / 寻址语法的消息一律放行、不判不改**：
+     - 消息链里有 @某人、引用回复（reply_to）
+     - 文本里有 <tool>、tool_calls、{"name":..,"arguments":..}、<|python_tag|>、
+       [CQ:at,qq=..]、[At:123456]、reply_to 等
+  为了快：裁决只要求模型回 OK / BAD|理由（约 5 个 token），重写只回消息本身，
+  正常消息只花一次调用；超时或调用失败一律放行，绝不因审查吞消息。
+
+  ## 二、发送后撤回
+  1. 有人接话时，找出机器人自己在窗口内（默认 100 秒）发的最后一段话；
+  2. 看现场反应：困惑/纠正 → 高优先级复核；随口「嗯」→ 直接放过；
+  3. 模型裁决 {"verdict":"recall|keep","confidence":..,"reason":..}；
+  4. 置信度达标且没超配额才调用 OneBot 的 delete_msg 撤回。
+
+  安全阀：只处理 2 分钟内的消息；每小时 3 次 / 每天 12 次 / 同会话 5 分钟冷却；
+  撤回可单独开演练模式。
+
+  需要协议端支持 get_group_msg_history / get_friend_msg_history（NapCat、LLOneBot、
+  Lagrange 均可）。指令：/air（状态）、/air audit（流水）、/air test（就地试跑）。
+version: 1.1.0
+author: DeepSeek Harness
+repo: https://github.com/Leaveing00001/astrbot_plugin_context_recall
+astrbot_version: ">=4.0.0"
+tags:
+  - 读空气
+  - 审查
+  - 重写
+  - 撤回
+  - 语境
+  - 自省
