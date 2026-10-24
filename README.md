@@ -141,9 +141,14 @@ WebUI → 插件 → 读空气。
 ## 七、安装
 
 ```bash
-# 目录名必须是 astrbot_plugin_context_recall，放到 AstrBot 的 data/plugins 下
-# 然后在 WebUI 插件页重载，或重启 AstrBot
+cd ~/.astrbot/data/plugins          # Windows: %USERPROFILE%\.astrbot\data\plugins
+git clone https://github.com/Leaveing00001/astrbot_plugin_context_recall.git
+
+# 或者手动：把仓库里的 main.py / core/ / _conf_schema.json / metadata.yaml
+# 放进 data/plugins/astrbot_plugin_context_recall/（目录名必须一致）
 ```
+
+克隆后在 WebUI 插件页重载（或重启 AstrBot）即可。没有第三方依赖，不用 pip install。
 
 ---
 
