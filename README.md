@@ -43,6 +43,18 @@ LLM 生成回复
 
 想连引用回复也一起审，把 `precheck.skip_structured` 关掉即可 —— 那时 `@` 和引用组件会被保留，只改文字部分。
 
+### 审查力度：`precheck.strictness`
+
+| 力度 | 判什么 | 适合 |
+|---|---|---|
+| `0` 宽松 | 只拦自相矛盾、语无伦次 | 只想挡住胡言乱语，别管内容 |
+| `1` 标准（默认） | 再加答非所问、事实错乱 | 大多数群 |
+| `2` 严格 | 再加**接错对象**（别人 @ 的是别人却抢着答）、话题完全错位 | 群里还有别的 bot、人多的时候 |
+| `3` 苛刻 | 再加空话（只有语气词）、重复自己刚说过的话、脑补上下文里没有的人/事/地点 | 想要「宁可不发」 |
+
+力度只改判据（system prompt 多几十个 token），不改变审查速度：每轮仍然只多一次短调用。
+改完在 WebUI 插件页保存即可，`/air` 会显示当前力度。
+
 ### 为什么快
 
 | 手段 | 效果 |
@@ -112,6 +124,7 @@ WebUI → 插件 → 读空气。
 |---|---|---|
 | `enable` | true | 总开关 |
 | `dry_run` | false | 演练（只记日志不拦截） |
+| `strictness` | 1 | **审查力度 0~3**，见下 |
 | `max_attempts` | 1 | 打回重写次数；0 = 只审不重写 |
 | `history_count` | 10 | 审查时带多少条记录 |
 | `max_line_chars` | 120 | 每条记录截多长 |
@@ -165,7 +178,7 @@ git clone https://github.com/Leaveing00001/astrbot_plugin_context_recall.git
 `core/` 里全是纯函数，不依赖 AstrBot、不连 QQ，可以直接跑：
 
 ```bash
-python tests/selftest.py      # 49 项
+python tests/selftest.py      # 62 项
 ```
 
 覆盖：`OK / BAD|理由` 解析（解析失败一律放行）、工具调用 / 寻址语法放行表、

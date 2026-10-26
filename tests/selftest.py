@@ -90,6 +90,26 @@ check("重写结果去掉引号", clean_q == "在呢", repr(clean_q))
 check("空重写返回空串", precheck.clean_rewrite("   ") == "")
 check("重写结果会被截断", len(precheck.clean_rewrite("啊" * 500, limit=40)) <= 40)
 
+# ── 3b. 审查力度（0~3） ─────────────────────────────────
+lv0 = precheck.judge_system(0)
+lv1 = precheck.judge_system(1)
+lv2 = precheck.judge_system(2)
+lv3 = precheck.judge_system(3)
+check("力度 0 只留两种判据", "只有这两种" in lv0 and "接错对象" not in lv0, lv0[:30])
+check("力度 1 就是原来的四类", "只有这四种" in lv1 and "答非所问" in lv1)
+check("力度 2 增加「接错对象」", "接错对象" in lv2 and "@" in lv2)
+check("力度 2 增加「话题错位」", "话题错位" in lv2)
+check("力度 3 再增加空话/重复/脑补",
+      all(k in lv3 for k in ("空话", "重复", "脑补")), "")
+check("三档越来越长（判据递增）", len(lv0) < len(lv1) < len(lv2) < len(lv3),
+      f"{len(lv0)} < {len(lv1)} < {len(lv2)} < {len(lv3)}")
+check("每档都保留输出格式约定",
+      all("BAD|" in t and "OK" in t for t in (lv0, lv1, lv2, lv3)))
+check("越界力度会被夹住",
+      precheck.clamp_strictness(9) == 3 and precheck.clamp_strictness(-2) == 0,
+      f"{precheck.clamp_strictness(9)} / {precheck.clamp_strictness(-2)}")
+check("非数字力度回落默认值", precheck.clamp_strictness("x") == 1)
+
 # ── 4. 聊天记录规范化 ───────────────────────────────────
 check("文本段原样保留",
       models.segment_to_text({"type": "text", "data": {"text": "你好"}}) == "你好")
@@ -171,6 +191,14 @@ check("转写带行号", "#1" in transcript and "#2" in transcript, transcript[:
 pc = settings.PrecheckSettings.from_config({})
 check("审查默认开启", pc.enable is True and pc.dry_run is False)
 check("审查默认重写 1 次", pc.max_attempts == 1)
+check("审查默认力度是 1（标准）", pc.strictness == 1, str(pc.strictness))
+
+pc3 = settings.PrecheckSettings.from_config({"precheck": {"strictness": 3}})
+check("力度能配到 3", pc3.strictness == 3)
+pc4 = settings.PrecheckSettings.from_config({"precheck": {"strictness": 99}})
+check("力度越界被夹到 3", pc4.strictness == 3, str(pc4.strictness))
+pc5 = settings.PrecheckSettings.from_config({"precheck": {"strictness": "严"}})
+check("力度写错回落默认 1", pc5.strictness == 1, str(pc5.strictness))
 
 pc2 = settings.PrecheckSettings.from_config(
     {"precheck": {"enable": False, "max_attempts": 99, "min_chars": 0,

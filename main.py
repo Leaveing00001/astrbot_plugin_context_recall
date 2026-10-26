@@ -39,7 +39,7 @@ from .core.judge import (
 )
 from .core.models import ChatLine, normalize_messages
 from .core.precheck import (
-    JUDGE_SYSTEM,
+    judge_system,
     REWRITE_SYSTEM,
     build_judge_prompt,
     build_rewrite_prompt,
@@ -52,7 +52,7 @@ from .core.settings import PrecheckSettings, Settings
 PLUGIN_NAME = "astrbot_plugin_context_recall"
 AUTHOR = "DeepSeek Harness"
 DESC = "让 bot 读空气：发送前审查逻辑、发送后按语境撤回"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 TAG = "[读空气]"
 
@@ -174,9 +174,10 @@ class ContextRecallPlugin(Star):
             self.logger.info("%s 配置里 enabled=false，插件将不做任何事。", TAG)
         pc = cfg.precheck
         self.logger.info(
-            "%s 发送前审查：%s | 演练=%s 重写上限=%d 次 超时=%.0fs 上下文=%d 条",
+            "%s 发送前审查：%s | 力度=%d/3 演练=%s 重写上限=%d 次 超时=%.0fs 上下文=%d 条",
             TAG,
             "开" if pc.enable else "关",
+            pc.strictness,
             pc.dry_run,
             pc.max_attempts,
             pc.timeout,
@@ -430,7 +431,7 @@ class ContextRecallPlugin(Star):
                 self.context.llm_generate(
                     chat_provider_id=provider_id,
                     prompt=prompt,
-                    system_prompt=JUDGE_SYSTEM,
+                    system_prompt=judge_system(pc.strictness),
                 ),
                 timeout=pc.timeout,
             )
@@ -1095,6 +1096,7 @@ class ContextRecallPlugin(Star):
             f"私聊{'开' if cfg.recall_private else '关'}"
             f" · 窗口 {cfg.max_message_age:.0f}s · 置信度阈值 {cfg.min_confidence:.2f}",
             f"发送前审查：{'开' if pc.enable else '关'}"
+            f" · 力度 {pc.strictness}/3（0 最松、3 最严）"
             f" · 表决行：{stats['checked']} 次，放行 {stats['passed']}"
             f"，重写 {stats['rewritten']}，拦截 {stats['blocked']}"
             f"{'（演练中，不会真拦）' if pc.dry_run else ''}",
