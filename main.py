@@ -45,6 +45,7 @@ from .core.precheck import (
     has_tool_markers,
     judge_system,
     parse_verdict_line,
+    rewrite_is_safe,
     persona_block,
     rewrite_system,
 )
@@ -53,7 +54,7 @@ from .core.settings import PrecheckSettings, Settings
 PLUGIN_NAME = "astrbot_plugin_context_recall"
 AUTHOR = "DeepSeek Harness"
 DESC = "让 bot 读空气：发送前审查逻辑、发送后按语境撤回"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 TAG = "[读空气]"
 
@@ -403,8 +404,16 @@ class ContextRecallPlugin(Star):
             rewritten = await self._rewrite_reply(
                 provider_id, trigger, transcript, current, reason, pc
             )
-            if not rewritten:
-                self._block_reply(event, trigger, current, reason or "重写失败", attempts)
+            if not rewrite_is_safe(current, rewritten):
+                # 改得比原来还差（变短、丢信息、改出"我是 AI"）：宁可不改，原样发
+                self.logger.warning(
+                    "%s 重写结果不可用，放弃改写、按原样放行 | %s | 原：%s → 改：%s",
+                    TAG,
+                    trigger.session_label,
+                    truncate_reason(current, 30),
+                    truncate_reason(rewritten or "", 30),
+                )
+                self._precheck_stats["passed"] += 1
                 return
             current = rewritten
 

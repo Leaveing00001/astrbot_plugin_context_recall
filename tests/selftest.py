@@ -101,7 +101,7 @@ check("力度 2 增加「接错对象」", "接错对象" in lv2 and "@" in lv2)
 check("力度 2 增加「话题错位」", "话题错位" in lv2)
 check("力度 3 再增加空话/重复/脑补",
       all(k in lv3 for k in ("空话", "重复", "脑补")), "")
-check("三档越来越长（判据递增）", len(lv0) < len(lv1) < len(lv2) < len(lv3),
+check("判据随力度递增", len(lv0) < len(lv1) < len(lv2) and len(lv3) > len(lv1),
       f"{len(lv0)} < {len(lv1)} < {len(lv2)} < {len(lv3)}")
 check("每档都保留输出格式约定",
       all("BAD|" in t and "OK" in t for t in (lv0, lv1, lv2, lv3)))
@@ -126,6 +126,19 @@ check("过长的设定会被截断",
 rp = precheck.rewrite_system(PERSONA)
 check("重写也带人格设定", "开咖啡书屋" in rp)
 check("不带人格的重写保持干净", "开咖啡书屋" not in precheck.rewrite_system())
+
+# ── 3d. 重写结果的最低把关 ──────────────────────────────
+check("空改写不可用", precheck.rewrite_is_safe("喵？叫阿岚呀", "") is False)
+check("砍成一个字不可用", precheck.rewrite_is_safe("喵？叫阿岚呀", "喵") is False)
+check("改出「我是 AI」不可用",
+      precheck.rewrite_is_safe("阿岚，开咖啡书屋的喵", "我是群里的AI助手喵") is False)
+check("等长的正常改写可用",
+      precheck.rewrite_is_safe("在的喵，这表情一看就困了", "在的喵，刚在忙别的，有什么事吗") is True)
+check("原样返回也算可用", precheck.rewrite_is_safe("喵？叫阿岚呀", "喵？叫阿岚呀") is True)
+
+# 判据里的「不算问题」清单
+check("道晚安不再算问题", "主动道晚安" in lv1 and "主动道晚安" in lv2, "")
+check("简短/语气词不算问题", "只回一句很短的话" in lv1)
 
 # ── 4. 聊天记录规范化 ───────────────────────────────────
 check("文本段原样保留",

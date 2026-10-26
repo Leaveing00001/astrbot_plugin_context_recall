@@ -9,6 +9,10 @@ desc: |-
   2. 判「是否明显不合逻辑」：答非所问 / 自相矛盾 / 事实错乱 / 语无伦次；
      力度可调（precheck.strictness 0~3）：0 只拦胡言乱语，2 起还拦
      「别人 @ 的是别人却抢着答」「话题完全错位」，3 再拦空话、重复、脑补；
+     判据里另有一份「不算问题」清单：主动道晚安/道别、接梗、吐槽、只说一个语气词，
+     只要不和上文冲突就放行；
+     审查和重写都带上当前人格设定（precheck.use_persona），照人设介绍自己不算编造；
+     改写还过一道把关：变短、丢信息、改出「我是 AI」的一律作废，按原稿发；
   3. 不合格就打回重写，重写的**再判一遍**；
   4. 始终不过就**拦截不发送**（可在配置里改成演练模式，只记日志）；
   5. **带工具调用 / 寻址语法的消息一律放行、不判不改**：
@@ -29,7 +33,7 @@ desc: |-
 
   需要协议端支持 get_group_msg_history / get_friend_msg_history（NapCat、LLOneBot、
   Lagrange 均可）。指令：/air（状态）、/air audit（流水）、/air test（就地试跑）。
-version: 1.3.0
+version: 1.3.1
 author: DeepSeek Harness
 repo: https://github.com/Leaveing00001/astrbot_plugin_context_recall
 astrbot_version: ">=4.0.0"
