@@ -110,6 +110,23 @@ check("越界力度会被夹住",
       f"{precheck.clamp_strictness(9)} / {precheck.clamp_strictness(-2)}")
 check("非数字力度回落默认值", precheck.clamp_strictness("x") == 1)
 
+# ── 3c. 审查要看得见人格设定 ────────────────────────────
+PERSONA = "名字：阿岚\n设定：阿岚是一只开咖啡书屋的猫，说话带「喵」，第三人称自称阿岚。"
+jp = precheck.judge_system(1, PERSONA)
+check("人格设定进了审查提示词", "开咖啡书屋" in jp and "阿岚" in jp)
+check("注明人设里的内容算事实", "一律算事实" in jp, "")
+check("点名「你是谁」不算编造", "不算编造身份" in jp or "不算编造" in jp)
+check("没有人格时给出中性说明", "没有额外的人格设定" in precheck.judge_system(1))
+
+long_persona = precheck.persona_block("啊" * 2000)
+check("过长的设定会被截断",
+      len(long_persona) <= precheck.PERSONA_MAX_CHARS + 60 and long_persona.endswith("…"),
+      str(len(long_persona)))
+
+rp = precheck.rewrite_system(PERSONA)
+check("重写也带人格设定", "开咖啡书屋" in rp)
+check("不带人格的重写保持干净", "开咖啡书屋" not in precheck.rewrite_system())
+
 # ── 4. 聊天记录规范化 ───────────────────────────────────
 check("文本段原样保留",
       models.segment_to_text({"type": "text", "data": {"text": "你好"}}) == "你好")
@@ -195,6 +212,9 @@ check("审查默认力度是 1（标准）", pc.strictness == 1, str(pc.strictne
 
 pc3 = settings.PrecheckSettings.from_config({"precheck": {"strictness": 3}})
 check("力度能配到 3", pc3.strictness == 3)
+check("默认带人设审查", pc.use_persona is True)
+pc6 = settings.PrecheckSettings.from_config({"precheck": {"use_persona": False}})
+check("人设审查能关", pc6.use_persona is False)
 pc4 = settings.PrecheckSettings.from_config({"precheck": {"strictness": 99}})
 check("力度越界被夹到 3", pc4.strictness == 3, str(pc4.strictness))
 pc5 = settings.PrecheckSettings.from_config({"precheck": {"strictness": "严"}})

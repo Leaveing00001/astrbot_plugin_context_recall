@@ -29,7 +29,7 @@ desc: |-
 
   需要协议端支持 get_group_msg_history / get_friend_msg_history（NapCat、LLOneBot、
   Lagrange 均可）。指令：/air（状态）、/air audit（流水）、/air test（就地试跑）。
-version: 1.2.0
+version: 1.3.0
 author: DeepSeek Harness
 repo: https://github.com/Leaveing00001/astrbot_plugin_context_recall
 astrbot_version: ">=4.0.0"

@@ -110,6 +110,7 @@ class PrecheckSettings:
     enable: bool = True
     dry_run: bool = False
     strictness: int = STRICTNESS_DEFAULT
+    use_persona: bool = True
     max_attempts: int = 1
     history_count: int = 10
     max_line_chars: int = 120
@@ -128,6 +129,7 @@ class PrecheckSettings:
             enable=_as_bool(dig(data, "precheck.enable"), True),
             dry_run=_as_bool(dig(data, "precheck.dry_run"), False),
             strictness=clamp_strictness(dig(data, "precheck.strictness", STRICTNESS_DEFAULT)),
+            use_persona=_as_bool(dig(data, "precheck.use_persona"), True),
             max_attempts=_as_int(dig(data, "precheck.max_attempts"), 1, 0),
             history_count=_as_int(dig(data, "precheck.history_count"), 10, 2),
             max_line_chars=_as_int(dig(data, "precheck.max_line_chars"), 120, 20),

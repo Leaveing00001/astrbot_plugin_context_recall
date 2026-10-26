@@ -39,20 +39,21 @@ from .core.judge import (
 )
 from .core.models import ChatLine, normalize_messages
 from .core.precheck import (
-    judge_system,
-    REWRITE_SYSTEM,
     build_judge_prompt,
     build_rewrite_prompt,
     clean_rewrite,
     has_tool_markers,
+    judge_system,
     parse_verdict_line,
+    persona_block,
+    rewrite_system,
 )
 from .core.settings import PrecheckSettings, Settings
 
 PLUGIN_NAME = "astrbot_plugin_context_recall"
 AUTHOR = "DeepSeek Harness"
 DESC = "让 bot 读空气：发送前审查逻辑、发送后按语境撤回"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 TAG = "[读空气]"
 
@@ -67,6 +68,9 @@ _RECALL_TIMEOUT = 8.0
 
 #: 后台任务并发上限，防止消息高峰打爆
 _MAX_BACKGROUND_TASKS = 6
+
+#: 人格设定的缓存时间：改了人设 5 分钟之内审查就能跟上
+_PERSONA_TTL = 300.0
 
 
 @dataclass(slots=True)
@@ -139,9 +143,12 @@ class ContextRecallPlugin(Star):
         self._audit = AuditLog(audit_path)
         self._seen: dict[str, dict[str, Any]] = {}
         self._tasks: set[asyncio.Task] = set()
-        self._history_down_until = 0.0
+        # 会话 → 流水不可用的截止时间；某个群查不到不该拖累别的会话
+        self._history_down: dict[str, float] = {}
         self._warned: set[str] = set()
         self._session_judged_at: dict[str, float] = {}
+        # 会话 → (取到的时刻, 人格片段)；审查和重写都要用，别每次去打数据库
+        self._persona_cache: dict[str, tuple[float, str]] = {}
         self._precheck_marks: deque[float] = deque(maxlen=2048)
         self._precheck_stats: dict[str, int] = {
             "checked": 0,
@@ -174,10 +181,11 @@ class ContextRecallPlugin(Star):
             self.logger.info("%s 配置里 enabled=false，插件将不做任何事。", TAG)
         pc = cfg.precheck
         self.logger.info(
-            "%s 发送前审查：%s | 力度=%d/3 演练=%s 重写上限=%d 次 超时=%.0fs 上下文=%d 条",
+            "%s 发送前审查：%s | 力度=%d/3 人格=%s 演练=%s 重写上限=%d 次 超时=%.0fs 上下文=%d 条",
             TAG,
             "开" if pc.enable else "关",
             pc.strictness,
+            "带人设" if pc.use_persona else "不带",
             pc.dry_run,
             pc.max_attempts,
             pc.timeout,
@@ -426,12 +434,13 @@ class ContextRecallPlugin(Star):
         prompt = build_judge_prompt(
             pc.judge_prompt, trigger.session_label, transcript, draft
         )
+        persona = await self._persona_brief(trigger.umo) if pc.use_persona else ""
         try:
             response = await asyncio.wait_for(
                 self.context.llm_generate(
                     chat_provider_id=provider_id,
                     prompt=prompt,
-                    system_prompt=judge_system(pc.strictness),
+                    system_prompt=judge_system(pc.strictness, persona),
                 ),
                 timeout=pc.timeout,
             )
@@ -452,12 +461,13 @@ class ContextRecallPlugin(Star):
         prompt = build_rewrite_prompt(
             pc.rewrite_prompt, trigger.session_label, transcript, draft, reason
         )
+        persona = await self._persona_brief(trigger.umo) if pc.use_persona else ""
         try:
             response = await asyncio.wait_for(
                 self.context.llm_generate(
                     chat_provider_id=provider_id,
                     prompt=prompt,
-                    system_prompt=REWRITE_SYSTEM,
+                    system_prompt=rewrite_system(persona),
                 ),
                 timeout=pc.timeout,
             )
@@ -773,8 +783,9 @@ class ContextRecallPlugin(Star):
     # 拉取聊天流水
     # ------------------------------------------------------------------
     async def _fetch(self, trigger: Trigger, count: int | None = None) -> list[dict] | None:
+        key = trigger.umo or f"{trigger.peer_id}"
         now = time.time()
-        if now < self._history_down_until:
+        if now < self._history_down.get(key, 0.0):
             return None
         try:
             raw = await asyncio.wait_for(
@@ -787,19 +798,21 @@ class ContextRecallPlugin(Star):
                 timeout=_HISTORY_TIMEOUT,
             )
         except (HistoryUnavailable, asyncio.TimeoutError) as exc:
-            self._note_history_failure(exc)
+            self._note_history_failure(exc, key)
             return None
         except Exception as exc:  # noqa: BLE001
-            self._note_history_failure(exc)
+            self._note_history_failure(exc, key)
             return None
         return raw
 
-    def _note_history_failure(self, exc: object) -> None:
-        self._history_down_until = time.time() + 900
+    def _note_history_failure(self, exc: object, key: str) -> None:
+        if len(self._history_down) > 200:
+            self._history_down.clear()
+        self._history_down[key] = time.time() + 900
         self._warn_once(
-            "history",
-            f"读取聊天流水失败，本插件需要 OneBot 的 get_group_msg_history / "
-            f"get_friend_msg_history 接口；15 分钟内不再重试。原因：{exc}",
+            f"history:{key}",
+            f"读取聊天流水失败（{key}），这个会话 15 分钟内不再做发送前审查；"
+            f"需要 OneBot 的 get_group_msg_history / get_friend_msg_history。原因：{exc}",
         )
 
     # ------------------------------------------------------------------
@@ -821,6 +834,34 @@ class ContextRecallPlugin(Star):
             if provider is not None:
                 return str(provider.meta().id)
         return None
+
+    async def _persona_brief(self, umo: str) -> str:
+        """当前会话的人格设定（名字 + 设定），给审查/重写当事实底本。
+
+        不带给审查员的话，它只看得见聊天记录，就会把「我是阿岚，开店的」
+        判成「编造身份」——人格里本来就写着的事，对它来说成了凭空捏造。
+        """
+        now = time.time()
+        cached = self._persona_cache.get(umo)
+        if cached and now - cached[0] < _PERSONA_TTL:
+            return cached[1]
+
+        text = ""
+        try:
+            manager = getattr(self.context, "persona_manager", None)
+            if manager is not None:
+                persona = await manager.get_default_persona_v3(umo)
+                if isinstance(persona, dict):
+                    name = str(persona.get("name") or "").strip()
+                    prompt = str(persona.get("prompt") or "").strip()
+                    text = (f"名字：{name}\n" if name else "") + prompt
+        except Exception as exc:  # noqa: BLE001 - 读不到就按无人格审查
+            self.logger.debug("%s 读取人格设定失败，本次按无人格审查：%s", TAG, exc)
+
+        if len(self._persona_cache) > 200:
+            self._persona_cache.clear()
+        self._persona_cache[umo] = (now, text)
+        return text
 
     async def _ask_llm(self, provider_id: str, prompt: str):
         try:
@@ -1097,6 +1138,7 @@ class ContextRecallPlugin(Star):
             f" · 窗口 {cfg.max_message_age:.0f}s · 置信度阈值 {cfg.min_confidence:.2f}",
             f"发送前审查：{'开' if pc.enable else '关'}"
             f" · 力度 {pc.strictness}/3（0 最松、3 最严）"
+            f" · 人设 {'开' if pc.use_persona else '关'}"
             f" · 表决行：{stats['checked']} 次，放行 {stats['passed']}"
             f"，重写 {stats['rewritten']}，拦截 {stats['blocked']}"
             f"{'（演练中，不会真拦）' if pc.dry_run else ''}",

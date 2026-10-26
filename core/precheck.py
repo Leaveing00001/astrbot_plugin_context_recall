@@ -25,12 +25,30 @@ STRICTNESS_DEFAULT = 1
 
 _JUDGE_BASE = """你是审校员，只判断机器人即将发出的回复能不能发。
 
+{persona}
+
 {criteria}
+
+另外：对方问「你是谁 / 你叫什么 / 你是干嘛的」时，回复按上面的人格设定介绍自己，
+不算答非所问，也不算编造身份。
 
 输出格式（严格遵守，不许有多余内容）：
 - 通过：输出 `OK`
 - 不通过：输出 `BAD|不超过10个字的理由`
 不要解释，不要换行，不要加任何其它文字。"""
+
+#: 人格设定最多塞多少字进审查提示词（太长会拖慢 prefill，而且审查只需要认出"我是谁"）
+PERSONA_MAX_CHARS = 700
+
+
+def persona_block(persona: str = "") -> str:
+    """把人格设定整理成审查/重写用的提示词片段。"""
+    text = (persona or "").strip()
+    if not text:
+        return "机器人没有额外的人格设定；它的自述只要在上下文里不自相矛盾，就不算编造。"
+    if len(text) > PERSONA_MAX_CHARS:
+        text = text[: PERSONA_MAX_CHARS - 1].rstrip() + "…"
+    return f"机器人的人格设定（与这里一致的内容一律算事实，不算编造）：\n{text}"
 
 #: 四档判据。0 最松、3 最严，措辞刻意写短（每次审查只多几十个 token）
 _STRICTNESS_CRITERIA: dict[int, str] = {
@@ -79,22 +97,36 @@ def clamp_strictness(value: object) -> int:
     return max(STRICTNESS_MIN, min(STRICTNESS_MAX, level))
 
 
-def judge_system(strictness: int = STRICTNESS_DEFAULT) -> str:
-    """按力度生成裁决用的 system prompt。"""
-    return _JUDGE_BASE.format(criteria=_STRICTNESS_CRITERIA[clamp_strictness(strictness)])
+def judge_system(strictness: int = STRICTNESS_DEFAULT, persona: str = "") -> str:
+    """按力度 + 人格设定生成裁决用的 system prompt。"""
+    return _JUDGE_BASE.format(
+        persona=persona_block(persona),
+        criteria=_STRICTNESS_CRITERIA[clamp_strictness(strictness)],
+    )
 
 
 #: 默认力度（1 = 标准）的 system prompt，保留这个名字给老代码用
 JUDGE_SYSTEM = judge_system(STRICTNESS_DEFAULT)
 
 
-REWRITE_SYSTEM = """你正在把自己刚说错的一句话重写。
-
+_REWRITE_BASE = """你正在把自己刚说错的一句话重写。
+{persona}
 要求：
 - 只修正被指出的问题，语气、人称、长度尽量保持原样；
 - 直接输出重写后的消息本身，不要引号、不要前缀、不要解释、不要换行。
 
 只输出这条消息。"""
+
+
+def rewrite_system(persona: str = "") -> str:
+    """重写用的 system prompt；带人格设定，免得改完不像同一个人。"""
+    text = (persona or "").strip()
+    block = f"\n{persona_block(text)}\n" if text else "\n"
+    return _REWRITE_BASE.format(persona=block)
+
+
+#: 不带人格设定的重写 prompt（老代码兼容）
+REWRITE_SYSTEM = rewrite_system()
 
 
 DEFAULT_JUDGE_PROMPT = """【场景】{{session_label}}

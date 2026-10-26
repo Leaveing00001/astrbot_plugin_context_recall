@@ -66,6 +66,12 @@
           "step": 1
         }
       },
+      "use_persona": {
+        "description": "审查时带上人格设定",
+        "type": "bool",
+        "default": true,
+        "hint": "把当前会话的人设（名字 + 设定，截断到 700 字）塞进审查和重写的 system prompt。不带的话，审查员只看得见聊天记录，会把「我是阿岚，开店的」这种照人设介绍自己判成「编造身份」。人格改完 5 分钟内自动生效。"
+      },
       "max_attempts": {
         "description": "打回重写的最大次数",
         "type": "int",
